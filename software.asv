@@ -3,10 +3,13 @@ close
 clc
 
 
+function [ki] = create_ki(sint, cost)
+    ki = [ [cost^2      cost*sint   -cost^2     -cost*sint]
+           [cost*sint   sint^2      -cost*sint  -sint^2   ]
+           [-cost^2     -cost*sint  cost^2      cost*sint ]
+           [-cost*sint  -sint^2     cost*sint   sint^2    ]];
+end
 
-
-E = 210e9;
-A = 2e-4;
 
 n_elementos = 3;
 n_gdl = n_elementos*2;
@@ -44,7 +47,7 @@ for i = 1:n_elementos
     sint = (y2-y1)/L;
     
     ki = create_ki(sint, cost);
-    kg(relacoes_elementos(i, :),relacoes_elementos(i, :)) = kg(relacoes_elementos(i, :),relacoes_elementos(i, :)) + E*A/L*ki;
+    kg(relacoes_elementos(i, :),relacoes_elementos(i, :)) = kg(relacoes_elementos(i, :),relacoes_elementos(i, :)) + ki;
 end
 
 kg
