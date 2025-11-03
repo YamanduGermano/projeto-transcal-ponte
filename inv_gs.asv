@@ -1,0 +1,20 @@
+function [u_values] = inv_gs(Kg,F)
+%INV_GS Summary of this function goes here
+%   Detailed explanation goes here
+    u_values = zeros(size(F),1);
+
+    e = 1;
+    while e<0.001
+        e_
+        for i = 1:size(F)
+            u_values(i) = F(i)/Kg(i,i);
+            
+            for j = 1:size(F)-1
+                u_values(i) = u_values - ( Kg(i , mod(j,size(F))+1)*u_values(mod(j,size(F))+1) ) / Kg(i,i);
+            end
+        end
+
+
+    end
+
+end

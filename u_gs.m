@@ -1,0 +1,25 @@
+function [u_values] = u_gs(Kg,F)
+%U_GS Summary of this function goes here
+%   Detailed explanation goes here
+    gdl_size = size(F,1);
+    u_values = zeros(gdl_size,1);
+
+    e = ones(gdl_size,1);
+    while sum(e)>0.001
+        u_antigo = u_values;
+        for i = 1:gdl_size
+
+            % Primeiro elemento (Bi/a_{ii})
+            u_values(i) = F(i)/Kg(i,i);
+            
+            % Restante dos elementos (- a_{ix}*x_{x} / a_{ii})
+            u_values(i) = u_values(i) - sum(Kg(i, 1:end ~= i)*u_values(1:end ~= i)) / Kg(i,i);
+
+            % Evitando divisões por 0.
+            if u_values(i)~=0
+                e(i) = (u_values(i) - u_antigo(i))/u_values(i);
+            end
+        end
+    end
+
+end
