@@ -3,89 +3,234 @@ close
 clc
 
 %% Dados
-E = 210e9;
-A = 2e-4;
 
-n_elementos = 3;
-n_gdl = n_elementos*2;
 
-relacoes_nos = [
-    [1 2]
-    [2 3]
-    [3 1]
-];
+jsonFilePath = 'dados.json'; 
+jsonText = fileread(jsonFilePath); 
 
-gdl_nos = [
-    [1 2]
-    [3 4]
-    [5 6]
-];
+dados = jsondecode(jsonText);
 
-pos_nos = [
-    [0   0  ]
-    [0   0.4]
-    [0.3 0.4]
-];
+E=dados.elasticidade;   % [Pa] - módulo de elasticidade do material (rigidez do material)
+A=dados.area;  % [m²] - área da seção transversal de cada barra
+n_elementos = dados.n_elementos;
+n_gdl = dados.n_gdl;
 
-gdl_fixos = [1 3 4];
+Tensao_Ruptura_Tracao = dados.tensao_ruptura;     % [Pa] - Exemplo de Tensão de Ruptura a Tração
+Tensao_Ruptura_Compressao = dados.tensao_compressao; % [Pa] - Exemplo de Tensão de Ruptura a Compressão
 
-forcas = [
-    [3 150 -100]
-]; % Em [nó fx fy]
+% Relações entre nós (conectividade dos elementos)
+relacoes_nos = dados.rel_nos;
 
-%% Cálculo da matriz global
-kg = zeros(n_gdl, n_gdl);
+gdl_nos = dados.gdl_nos;
 
+% Coordenadas dos nós [x, y] em metros
+pos_nos = dados.pos_nos;
+
+% Graus de liberdade fixos com restrição
+gdl_fixos = dados.gdl_fixos;
+
+% Forças aplicadas no sistema
+% Fx e Fy em [N] (Newton)
+forcas = dados.forcas; % Em [nó fx fy]
+
+%% Cálculo da matriz de rigidez global da estrutura
+kg = zeros(n_gdl, n_gdl); % matriz de rigidez global
 for i = 1:n_elementos
+    % Coordenadas dos nós do elemento i
     x1 = pos_nos(relacoes_nos(i,1) , 1);
     y1 = pos_nos(relacoes_nos(i,1) , 2);
-
     x2 = pos_nos(relacoes_nos(i,2) , 1);
     y2 = pos_nos(relacoes_nos(i,2) , 2);
+    % Comprimento do elemento [m]
     L = sqrt((x2-x1)^2 + (y2-y1)^2);
     
+    % Cosseno e seno da inclinação da barra
     cost = (x2-x1)/L;
     sint = (y2-y1)/L;
     
-    ki = create_ki(sint, cost);
+    % Matriz de rigidez local do elemento (no sistema global)
+    ki = create_ki(sint, cost); 
+    % Graus de liberdade correspondentes a este elemento
     gdls_elemento = [gdl_nos(relacoes_nos(i,1),:) gdl_nos(relacoes_nos(i,2),:)];
+    % Soma das matrizes de rigidez locais na matriz global
     kg(gdls_elemento, gdls_elemento) = kg(gdls_elemento, gdls_elemento) + E*A/L*ki;
 end
-
-disp('Matriz de rigidez global:')
+disp('Matriz de rigidez global (N/m):')
 disp(kg)
-
-%% Cálculo das forças com casos de contorno
-
-F = zeros(n_gdl,1);
-
-% Criar lista de forças
+%% Montagem do vetor de forças globais e aplicação das condições de contorno
+F = zeros(n_gdl,1); % vetor de forças globais (N)
+% Preenche o vetor global de forças aplicadas
 for i = 1:size(forcas,1)
-    F(gdl_nos(forcas(i,1) , 1)) = F(gdl_nos(forcas(i,1) , 1)) + forcas(i,2);% força em x no nó i
-    F(gdl_nos(forcas(i,1) , 2)) = F(gdl_nos(forcas(i,1) , 2)) + forcas(i,3); % força em y no nó i
+    F(gdl_nos(forcas(i,1) , 1)) = F(gdl_nos(forcas(i,1) , 1)) + forcas(i,2); % força Fx
+    F(gdl_nos(forcas(i,1) , 2)) = F(gdl_nos(forcas(i,1) , 2)) + forcas(i,3); % força Fy
+end
+disp('Vetor global de forças (N):')
+disp(F)
+
+gdl_livres = 1:n_gdl;
+gdl_livres(gdl_fixos) = []; % Remove os GDLs fixos da lista
+
+% Reduz matriz e vetor retirando linhas e colunas fixas (apoios)
+kg_cont = kg(gdl_livres, gdl_livres);
+f_cont = F(gdl_livres);
+
+%% Solução do sistema de equações (deslocamentos desconhecidos)
+u_contorno = kg_cont \ f_cont;      
+% Monta vetor global de deslocamentos
+U = zeros(n_gdl,1);
+U(gdl_livres) = u_contorno; %%% Alterado para usar gdl_livres (mais limpo)
+% Calcula as forças de reação nos apoios (Requisito Essencial 3.c)
+F_reacoes = kg*U; % Renomeado para não sobrescrever o vetor F original
+disp('Forças com reações calculadas (N):')
+disp(F_reacoes)
+disp('Deslocamentos dos nós (m):') % Requisito Essencial 3.a
+disp(U)
+%------------------------------------------------------------------------------
+% Cálculo das tensões em cada elemento (Requisito Essencial 3.b)
+% Tensão axial - indica se o elemento está em tração (+) ou compressão (-)
+fprintf('\nTensões em cada elemento:\n');
+for i = 1:n_elementos
+    n1 = relacoes_nos(i,1);
+    n2 = relacoes_nos(i,2);
+    x1 = pos_nos(n1,1); y1 = pos_nos(n1,2);
+    x2 = pos_nos(n2,1); y2 = pos_nos(n2,2);
+    L = sqrt((x2-x1)^2 + (y2-y1)^2);
+    c = (x2-x1)/L; s = (y2-y1)/L;
+    % Graus de liberdade do elemento
+    gdls_elemento = [gdl_nos(n1,:) gdl_nos(n2,:)];
+    u_e = U(gdls_elemento);
+    % Deformação axial do elemento (ε = ΔL/L)
+    delta = [-c -s c s]*u_e;
+    epsilon = delta / L; % [adimensional]
+    % Tensão axial (Lei de Hooke)
+    sigma = E * epsilon; % [Pa]
+    % Classificação da tensão
+    if sigma >= 0
+        tipo = 'Tração';
+    else
+        tipo = 'Compressão';
+    end
+    fprintf('Elemento %d: σ = %.3f MPa (%s)\n', i, sigma/1e6, tipo);
+end
+%------------------------------------------------------------------------------
+%------------------------------------------------------------------------------
+%% DADOS ADICIONADOS PARA A PARTE AVANÇADA 
+% Momento de Inércia
+I = 6.67e-8;     % [m^4] - Momento de Inércia para peças retângulares de 100mm x 20mm
+% Parâmetros para o Método de Gauss-Seidel
+tol = 1e-6;      % Tolerância para convergência
+max_iter = 1000; % Número máximo de iterações
+
+fprintf('\n\n--- INÍCIO DA ANÁLISE AVANÇADA (SEPARADA) ---\n');
+
+%% Solução do sistema (REQUISITO AVANÇADO 1: Gauss-Seidel)
+% Nota: kg_cont e f_cont já foram definidos na parte essencial
+fprintf('\nIniciando solução por Gauss-Seidel (Avançado 1)...\n');
+u_contorno_avancado = u_gs(kg_cont, f_cont, tol, max_iter); 
+% Monta vetor global de deslocamentos (AVANÇADO)
+U_avancado = zeros(n_gdl,1);
+U_avancado(gdl_livres) = u_contorno_avancado; 
+fprintf('Deslocamentos dos nós (m) - (Cálculo Avançado):\n');
+disp(U_avancado);
+%% Análise de Tensão e Flambagem (REQUISITO AVANÇADO 2)
+fprintf('\n--- Análise de Falha (Avançado 2) ---\n');
+for i = 1:n_elementos
+    fprintf('--- Elemento %d ---\n', i);
+    n1 = relacoes_nos(i,1);
+    n2 = relacoes_nos(i,2);
+    x1 = pos_nos(n1,1); y1 = pos_nos(n1,2);
+    x2 = pos_nos(n2,1); y2 = pos_nos(n2,2);
+    L = sqrt((x2-x1)^2 + (y2-y1)^2);
+    c = (x2-x1)/L; s = (y2-y1)/L;
+    
+    % Graus de liberdade do elemento
+    gdls_elemento = [gdl_nos(n1,:) gdl_nos(n2,:)];
+    % USA O DESLOCAMENTO CALCULADO PELO MÉTODO AVANÇADO
+    u_e = U_avancado(gdls_elemento); 
+    
+    % Cálculo da tensão (igual ao essencial, mas com U_avancado)
+    delta = [-c -s c s]*u_e;
+    epsilon = delta / L; 
+    sigma = E * epsilon; 
+    
+    fprintf('   Tensão (Cálc. Avançado): %.3f MPa\n', sigma/1e6);
+
+    % REQUISITO AVANÇADO 2: Análise de Condições de Tensão
+    
+    if sigma > 0 % Elemento em TRAÇÃO
+        % 2.a: Análise de Falha por Tensão (Tração)
+        if sigma > Tensao_Ruptura_Tracao
+            fprintf('   Status (Tensão): FALHA (Tensão de Tração %.3f MPa > Ruptura %.3f MPa)\n', sigma/1e6, Tensao_Ruptura_Tracao/1e6);
+        else
+            fprintf('   Status (Tensão): Seguro (Tensão de Tração %.3f MPa <= Ruptura %.3f MPa)\n', sigma/1e6, Tensao_Ruptura_Tracao/1e6);
+        end
+        % 2.b: Análise de Flambagem
+        fprintf('   Status (Flambagem): N/A (Elemento em Tração)\n');
+        
+    elseif sigma < 0 % Elemento em COMPRESSÃO
+        P_compressive = abs(sigma * A); % Força de compressão atual [N]
+        
+        % 2.a: Análise de Falha por Tensão (Compressão)
+        if abs(sigma) > Tensao_Ruptura_Compressao
+            fprintf('   Status (Tensão): FALHA (Tensão de Compressão %.3f MPa > Ruptura %.3f MPa)\n', abs(sigma)/1e6, Tensao_Ruptura_Compressao/1e6);
+        else
+            fprintf('   Status (Tensão): Seguro (Tensão de Compressão %.3f MPa <= Ruptura %.3f MPa)\n', abs(sigma)/1e6, Tensao_Ruptura_Compressao/1e6);
+        end
+        
+        % 2.b: Análise de Falha por Flambagem
+        % Carga Crítica de Euler (Assume-se apoios pinados Le = L)
+        P_cr = (pi^2 * E * I) / (L^2); 
+        
+        if P_compressive > P_cr
+            fprintf('   Status (Flambagem): FALHA (Força %.2f N > Carga Crítica %.2f N)\n', P_compressive, P_cr);
+        else
+            fprintf('   Status (Flambagem): Seguro (Força %.2f N <= Carga Crítica %.2f N)\n', P_compressive, P_cr);
+        end
+        
+    else % sigma == 0
+        fprintf('   Status (Tensão): Seguro (Sem tensão)\n');
+        fprintf('   Status (Flambagem): Seguro (Sem carga)\n');
+    end
 end
 
-disp('Forças do sistema:')
-disp(F)
-
-% Retirar as linhas e colunas dos casos de contorno.
-kg_cont = kg(~ismember( 1:n_gdl, gdl_fixos), ~ismember( 1:n_gdl, gdl_fixos));
-f_cont = F(~ismember( 1:n_gdl, gdl_fixos));
-
-% Calcular os deslocamentos dos pontos
-% Utilizando método iterativo de Gauss-Seidel para cálculo da inversa da
-% matriz.
-u_contorno = u_gs(kg_cont,f_cont);
-
-% Juntar à lista global de deslocamentos
-U = zeros(n_gdl,1);
-U( ~ismember( 1:n_gdl, gdl_fixos)) = u_contorno;
-
-% Calcular as forças de reação.
-F = kg*U;
-
-disp('Forças com reações calculadas:')
-disp(F)
-
-disp('Deslocamentos dos nós:')
-disp(U)
+%------------------------------------------------------------------------------
+%% Funções auxíliares 
+% Função para criar a matriz de rigidez local 
+function ki = create_ki(sint, cost)
+    c2 = cost^2;
+    s2 = sint^2;
+    cs = cost*sint;
+    ki = [
+         c2  cs -c2 -cs;
+         cs  s2 -cs -s2;
+        -c2 -cs  c2  cs;
+        -cs -s2  cs  s2;
+    ];
+end
+% Função para Método de Gauss-Seidel 
+function x = u_gs(A, b, tol, max_iter)
+    n = length(b);
+    x = zeros(n, 1); % Chute inicial
+    
+    for k = 1:max_iter
+        x_old = x;
+        for i = 1:n
+            % Evita divisão por zero se a diagonal for 0
+            if A(i,i) == 0
+                error('Elemento diagonal nulo encontrado. Gauss-Seidel não pode continuar.');
+            end
+            sigma1 = A(i, 1:i-1) * x(1:i-1);     % Usa valores novos (k)
+            sigma2 = A(i, i+1:n) * x_old(i+1:n); % Usa valores antigos (k-1)
+            
+            x(i) = (b(i) - sigma1 - sigma2) / A(i,i);
+        end
+        
+        % Critério de parada (norma infinita)
+        if norm(x - x_old, inf) < tol
+            fprintf('Gauss-Seidel convergiu em %d iterações.\n', k);
+            return;
+        end
+    end
+    
+    fprintf('Gauss-Seidel NÃO convergiu após %d iterações.\n', max_iter);
+end
